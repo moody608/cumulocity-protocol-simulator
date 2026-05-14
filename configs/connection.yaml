@@ -1,0 +1,10 @@
+cumulocity:
+  base_url: "https://jake.eu-latest.cumulocity.com"
+  tenant: "t2099544367"
+  username: "Jake_Moody"
+  password: "qiP581Ries@#Pz"
+  mqtt_host: "mqtt.jake.eu-latest.cumulocity.com"
+  mqtt_port: 1883
+  client_id: "iot-simulator"
+  external_id_type: "c8y_Serial"
+  device_type: "demo_Device"

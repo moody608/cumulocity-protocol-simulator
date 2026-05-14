@@ -1,0 +1,130 @@
+inventory:
+  identity:
+    externalIdType: c8y_Serial
+    deviceType: demo_Device
+
+  fragments:
+    hardware:
+      target: c8y_Hardware
+      fields:
+        model: model
+        serialNumber: serialNumber
+        hardwareRevision: revision
+
+    firmware:
+      target: c8y_Firmware
+      fields:
+        firmwareVersion: version
+
+    deviceInfo:
+      target: demo_DeviceInfo
+      fields:
+        deviceClass: deviceClass
+        manufacturer: manufacturer
+
+    operational:
+      target: demo_Operational
+
+    service:
+      target: demo_Service
+
+    compliance:
+      target: demo_Compliance
+
+    location:
+      target: c8y_Position
+      fields:
+        lat: lat
+        lng: lng
+        alt: alt
+
+measurements:
+  temperatureC:
+    fragment: c8y_Temperature
+    series: T
+    unit: C
+    type: c8y_TemperatureMeasurement
+
+  humidityPct:
+    fragment: c8y_Humidity
+    series: H
+    unit: "%"
+    type: c8y_HumidityMeasurement
+
+  batteryPct:
+    fragment: demo_Battery
+    series: level
+    unit: "%"
+    type: demo_DeviceMeasurement
+
+  signalRssi:
+    fragment: demo_Signal
+    series: rssi
+    unit: dBm
+    type: demo_DeviceMeasurement
+
+  voltageV:
+    fragment: demo_Electrical
+    series: voltage
+    unit: V
+    type: demo_ElectricalMeasurement
+
+  currentA:
+    fragment: demo_Electrical
+    series: current
+    unit: A
+    type: demo_ElectricalMeasurement
+
+  powerKw:
+    fragment: demo_Electrical
+    series: power
+    unit: kW
+    type: demo_ElectricalMeasurement
+
+  energyKwh:
+    fragment: demo_Electrical
+    series: energy
+    unit: kWh
+    type: demo_ElectricalMeasurement
+
+  frequencyHz:
+    fragment: demo_PowerQuality
+    series: frequency
+    unit: Hz
+    type: demo_PowerQualityMeasurement
+
+  powerFactor:
+    fragment: demo_PowerQuality
+    series: powerFactor
+    unit: ratio
+    type: demo_PowerQualityMeasurement
+
+defaults:
+  measurement:
+    fragment: demo_Custom
+    unit: value
+    type: demo_GenericMeasurement
+
+alarms:
+  batteryLow:
+    type: demo_BatteryLowAlarm
+    severity: MINOR
+    text: "Battery level low: {batteryPct}"
+    status: ACTIVE
+
+  underVoltage:
+    type: demo_UnderVoltageAlarm
+    severity: MINOR
+    text: "Voltage low: {measuredVoltage} V, expected {expectedVoltage} V"
+    status: ACTIVE
+
+  powerFactorLow:
+    type: demo_PowerFactorAlarm
+    severity: WARNING
+    text: "Power factor degraded: {powerFactor}"
+    status: ACTIVE
+
+events:
+  maintenanceDue:
+    type: demo_MaintenanceEvent
+    text: Preventive maintenance due

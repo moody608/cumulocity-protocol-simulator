@@ -1,0 +1,38 @@
+assets:
+  - deviceId: "12345"
+    deviceClass: sensorNode
+    protocol: mqtt
+    name: Jake MQTT Device
+    intervalSec: 10
+    profile:
+      startingBatteryPct: 88
+      tempMinC: 19.5
+      tempMaxC: 23.5
+      humidityMinPct: 30
+      humidityMaxPct: 50
+      batteryDrainPerTickMax: 0.15
+    metadata:
+      manufacturer: Demo Devices
+      model: SN-200
+      firmwareVersion: "1.0.1"
+
+  - deviceId: "20001"
+    deviceClass: smartMeter
+    protocol: modbus
+    name: Building Smart Meter
+    intervalSec: 5
+    profile:
+      startingEnergyKwh: 5400.0
+      baseVoltageV: 120.0
+      baseCurrentA: 22.0
+      baseFrequencyHz: 60.0
+      basePowerFactor: 0.96
+      voltageVariationV: 1.5
+      currentVariationA: 2.0
+      frequencyVariationHz: 0.03
+      powerFactorDropMax: 0.02
+      powerFactorRiseMax: 0.005
+    metadata:
+      manufacturer: Schneider Demo
+      model: PowerLogic Virtual
+      firmwareVersion: "2.3.1"
