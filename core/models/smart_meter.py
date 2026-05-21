@@ -1,25 +1,38 @@
+"""
+Smart meter simulator for the IoT simulator.
+
+Models an electrical smart meter that emits voltage, current, frequency, power
+factor, active power, and cumulative energy each tick. Energy accumulates across
+ticks. Raises underVoltage and powerFactorLow alarms when readings fall outside
+acceptable thresholds. Supports additional user-defined channels in the asset profile.
+"""
 import random
 from datetime import datetime, timezone
 
-from core.models.base import AssetState, AlarmState
+from core.models.base import AssetState, AlarmState, Channel
+from core.models.base_simulator import BaseSimulator
 
 
-class SmartMeterSimulator:
+class SmartMeterSimulator(BaseSimulator):
     def __init__(
         self,
         device_id: str,
         name: str,
+        protocol: str = "mqtt",
         interval_sec: int = 5,
         profile=None,
         location=None,
-        metadata=None
+        metadata=None,
+        channels: list[Channel] | None = None,
     ):
         self.device_id = str(device_id)
         self.name = name
+        self.protocol = protocol
         self.interval_sec = int(interval_sec)
         self.profile = profile or {}
         self.location = location
         self.metadata = metadata or {}
+        self.channels: list[Channel] = channels or []
 
         self.energy_kwh = float(self.profile.get("startingEnergyKwh", 1250.0))
         self.base_voltage = float(self.profile.get("baseVoltageV", 120.0))
@@ -94,10 +107,21 @@ class SmartMeterSimulator:
                 )
             )
 
+        telemetry = {
+            "voltageV": voltage,
+            "currentA": current,
+            "powerKw": power_kw,
+            "energyKwh": self.energy_kwh,
+            "frequencyHz": frequency,
+            "powerFactor": power_factor,
+        }
+        for channel in self.channels:
+            telemetry[channel.name] = round(random.uniform(channel.min, channel.max), channel.precision)
+
         return AssetState(
             device_id=self.device_id,
             device_class="smartMeter",
-            protocol="mqtt",
+            protocol=self.protocol,
             timestamp=now,
             identity={
                 "name": self.name,
@@ -107,14 +131,7 @@ class SmartMeterSimulator:
                 "firmwareVersion": self.metadata.get("firmwareVersion", "1.0.0"),
                 "hardwareRevision": self.metadata.get("hardwareRevision", "A1"),
             },
-            telemetry={
-                "voltageV": voltage,
-                "currentA": current,
-                "powerKw": power_kw,
-                "energyKwh": self.energy_kwh,
-                "frequencyHz": frequency,
-                "powerFactor": power_factor,
-            },
+            telemetry=telemetry,
             operational={
                 "status": "ONLINE",
                 "connected": True,

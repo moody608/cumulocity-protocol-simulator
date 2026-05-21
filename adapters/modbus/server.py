@@ -1,26 +1,22 @@
-import asyncio
-
 from pymodbus import ModbusDeviceIdentification
 from pymodbus.datastore import (
     ModbusDeviceContext,
     ModbusSequentialDataBlock,
     ModbusServerContext,
 )
-from pymodbus.server import StartAsyncTcpServer
+from pymodbus.server import StartAsyncTcpServer, ServerAsyncStop
 
 
 class ModbusSimulatorServer:
     def __init__(
         self,
-        simulator,
-        register_mapper,
+        log,
         host="0.0.0.0",
         port=5020,
         device_id=1,
         register_count=100,
     ):
-        self.simulator = simulator
-        self.register_mapper = register_mapper
+        self.log = log
         self.host = host
         self.port = port
         self.device_id = device_id
@@ -40,11 +36,10 @@ class ModbusSimulatorServer:
 
         self.identity = ModbusDeviceIdentification(
             info_name={
-                "VendorName": "IoTSimulator",
+                "VendorName": "iot-simulator",
                 "ProductCode": "IOTSIM",
                 "VendorUrl": "https://github.com/moody608/IoTSimulator",
                 "ProductName": "IoT Simulator Modbus Adapter",
-                "ModelName": type(self.simulator).__name__,
                 "MajorMinorRevision": "0.1.0",
             }
         )
@@ -52,7 +47,7 @@ class ModbusSimulatorServer:
     def _to_unsigned_16(self, value: int) -> int:
         return int(value) & 0xFFFF
 
-    async def _write_holding_registers(self, registers: dict[int, int]) -> None:
+    def update_registers(self, registers: dict[int, int]) -> None:
         for address, value in registers.items():
             self.device_context.setValues(
                 3,
@@ -60,28 +55,13 @@ class ModbusSimulatorServer:
                 [self._to_unsigned_16(value)],
             )
 
-    async def update_loop(self):
-        while True:
-            state = self.simulator.tick()
-            registers = self.register_mapper(state)
-
-            await self._write_holding_registers(registers)
-
-            print(
-                f"Updated deviceId={state.device_id} "
-                f"voltage={state.telemetry.get('voltageV')} "
-                f"current={state.telemetry.get('currentA')} "
-                f"power={state.telemetry.get('powerKw')} "
-                f"registers={ {k: registers[k] for k in sorted(registers.keys())[:10]} }"
-            )
-
-            await asyncio.sleep(self.simulator.interval_sec)
-
-    async def start(self):
-        asyncio.create_task(self.update_loop())
-
+    async def start(self) -> None:
+        self.log.info("listening host=%s port=%s unit=%s", self.host, self.port, self.device_id)
         await StartAsyncTcpServer(
             context=self.context,
             identity=self.identity,
             address=(self.host, self.port),
         )
+
+    async def stop(self) -> None:
+        await ServerAsyncStop()

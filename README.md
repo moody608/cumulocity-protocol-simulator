@@ -1,249 +1,565 @@
-# IoT Simulator Guide
+# IoT Simulator
 
-This project is a configurable IoT simulator that can run multiple simulated devices at the same time and expose them through different protocols such as MQTT and Modbus. The current design uses typed asset configuration, device-class-based simulator construction, and protocol runtimes so different device types and protocols can coexist in one run of the application.
+A configurable IoT device simulator that runs multiple virtual devices simultaneously and exposes them over different protocols. Device behavior and protocol transport are separate concerns — the same device class can run over different protocols, and a single process can run a mixed fleet.
 
-## What the simulator does
+## Quick start
 
-The simulator reads device definitions from configuration, builds the correct simulator for each device class, and then starts the protocol runtime associated with each asset. In the current implementation, this means a single run can include MQTT-publishing devices and Modbus-serving devices at the same time, using the same overall orchestration flow.
+```bash
+pip install -r requirements.txt
+python main.py
+```
 
-Typical use cases include:
+The simulator reads `configs/assets.yaml`, builds a simulator for each asset, starts the matching protocol runtime, and runs everything concurrently.
 
-- Testing Cumulocity or other MQTT-based ingestion paths with realistic simulated telemetry.
-- Exposing changing device values through Modbus TCP so external Modbus clients can poll them like real devices.
-- Running mixed fleets of different device classes from a single configuration file.
+---
 
 ## Project concepts
 
-The simulator is organized around a few key concepts:
-
 | Concept | Purpose |
 |---------|---------|
-| `AssetConfig` | Typed representation of one configured device loaded from `configs/assets.yaml`. |
-| `AssetState` | Canonical runtime state emitted by a simulator tick, including identity, telemetry, alarms, and other operational fields. |
-| Simulator | Device behavior model selected by `deviceClass`, such as a sensor node or smart meter. |
-| Protocol runtime | Protocol-specific execution layer, such as MQTT publishing or Modbus serving. |
-| Factory | Helper that builds simulators and runtimes from configuration instead of hardcoding those choices in `main.py`. |
+| `AssetConfig` | Typed representation of one device loaded from `assets.yaml`. |
+| `AssetState` | Canonical state emitted each tick: identity, telemetry, alarms. |
+| Simulator | Device behavior model (`sensorNode`, `smartMeter`). |
+| Runtime | Protocol transport layer (`mqtt`, `modbus`, `lora`, `lwm2m`). |
+| Factory | Builds simulators and runtimes from config — keeps `main.py` clean. |
 
-This separation is important because device behavior and protocol behavior are different responsibilities. A smart meter simulator defines how voltage, current, power, and energy change over time, while a Modbus runtime defines how that state is exposed to a Modbus client.
+---
 
 ## Configuration files
 
-The simulator currently uses multiple YAML files, with different levels of typing and validation.
+| File | Purpose |
+|------|---------|
+| `configs/assets.yaml` | Defines simulated devices — class, protocol, timing, and profile. Strongly typed. |
+| `configs/connection.yaml` | MQTT / Cumulocity connection settings. |
+| `configs/cumulocity-mapping.yaml` | Measurement and alarm mappings for the MQTT publishing path. |
 
-| File | Purpose | Parsing style |
-|------|---------|---------------|
-| `configs/assets.yaml` | Defines the simulated assets, their class, protocol, timing, and profile data. | Parsed into typed `AssetConfig` objects. |
-| `configs/connection.yaml` | Stores MQTT or platform connection settings used by the publisher. | Loaded as a raw YAML dictionary for now.[1] |
-| `configs/cumulocity-mapping.yaml` | Stores measurement mapping details used by the MQTT publishing path. | Loaded as a raw YAML dictionary for now.[1] |
+---
 
-The reason only `assets.yaml` is typed right now is that it already has a stable contract, while the connection and mapping files are still flexible and may continue evolving.
+## assets.yaml reference
 
-## assets.yaml format
+Every entry under `assets:` defines one simulated device. Only `assets.yaml` is strongly validated; the other config files are loaded as loose dictionaries.
 
-Each entry under `assets:` defines one simulated device. A typical structure looks like this:
+### Top-level fields
+
+| Field | Required | Type | Description |
+|-------|----------|------|-------------|
+| `deviceId` | Yes | string | Unique identifier for this device. Also used as the external ID in Cumulocity. |
+| `deviceClass` | Yes | string | Selects the simulator model. See [Device classes](#device-classes). |
+| `protocol` | Yes | string | Selects the protocol runtime. See [Protocols](#protocols). |
+| `name` | Yes | string | Human-readable display name used in registration and logs. |
+| `intervalSec` | Yes | integer | How often the simulator ticks and emits new state, in seconds. |
+| `profile` | Yes (in practice) | dict | Simulator behavior inputs. Schema depends on `deviceClass`. |
+| `metadata` | No | dict | Descriptive identity fields passed to the device model. Fields not listed here are ignored. |
+| `protocolConfig` | Required for `lora` and `lwm2m` | dict | Protocol-specific connection config. Schema depends on `protocol`. |
+
+---
+
+## Device classes
+
+### `sensorNode`
+
+Simulates a battery-powered environmental sensor that reports temperature, humidity, signal strength, and battery level. Battery drains each tick and raises a `batteryLow` alarm below 20%.
+
+#### `profile` fields
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `startingBatteryPct` | Random 70–95 | Initial battery percentage. Drains each tick. |
+| `tempMinC` | `20.5` | Low end of the temperature range in °C. |
+| `tempMaxC` | `24.5` | High end of the temperature range in °C. |
+| `humidityMinPct` | `35.0` | Low end of the humidity range in %. |
+| `humidityMaxPct` | `55.0` | High end of the humidity range in %. |
+| `rssiMin` | `-78` | Low end of the signal RSSI range in dBm. |
+| `rssiMax` | `-55` | High end of the signal RSSI range in dBm. |
+| `batteryDrainPerTickMax` | `0.2` | Maximum battery percentage drained per tick. Actual drain is a random value between 0 and this. |
+
+#### `metadata` fields
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `manufacturer` | `"Demo Devices"` | Manufacturer name reported in device identity. |
+| `model` | `"SN-200"` | Model name. |
+| `firmwareVersion` | `"1.0.0"` | Firmware version string. |
+| `serialNumber` | Device ID | Serial number. Defaults to `deviceId` if omitted. |
+| `hardwareRevision` | `"A1"` | Hardware revision string. |
+| `otaEligible` | `true` | Whether the device is marked eligible for OTA updates. |
+| `certificateStatus` | `"valid"` | Certificate status reported in compliance state. |
+| `policyVersion` | `"2026.04"` | Policy version reported in compliance state. |
+
+#### Alarms emitted
+
+| Alarm type | Trigger condition | Severity |
+|------------|------------------|---------|
+| `batteryLow` | Battery drops below 20% | `MINOR` |
+
+#### Example
 
 ```yaml
-assets:
-  - deviceId: "12345"
-    deviceClass: sensorNode
-    protocol: mqtt
-    name: Jake MQTT Device
-    intervalSec: 10
-    profile:
-      startingBatteryPct: 88
-      tempMinC: 19.5
-      tempMaxC: 23.5
-      humidityMinPct: 30
-      humidityMaxPct: 50
-      batteryDrainPerTickMax: 0.15
-    metadata:
-      manufacturer: Demo Devices
-      model: SN-200
-      firmwareVersion: "1.0.1"
-
-  - deviceId: "20001"
-    deviceClass: smartMeter
-    protocol: mqtt
-    name: Building Smart Meter
-    intervalSec: 5
-    profile:
-      startingEnergyKwh: 5400.0
-      baseVoltageV: 120.0
-      baseCurrentA: 22.0
-      baseFrequencyHz: 60.0
-      basePowerFactor: 0.96
-      voltageVariationV: 1.5
-      currentVariationA: 2.0
-      frequencyVariationHz: 0.03
-      powerFactorDropMax: 0.02
-      powerFactorRiseMax: 0.005
-    metadata:
-      manufacturer: Schneider Demo
-      model: PowerLogic Virtual
-      firmwareVersion: "2.3.1"
+- deviceId: "sensor-001"
+  deviceClass: sensorNode
+  protocol: mqtt
+  name: Warehouse Sensor A
+  intervalSec: 10
+  profile:
+    startingBatteryPct: 88
+    tempMinC: 19.5
+    tempMaxC: 23.5
+    humidityMinPct: 30
+    humidityMaxPct: 50
+    rssiMin: -85
+    rssiMax: -50
+    batteryDrainPerTickMax: 0.15
+  metadata:
+    manufacturer: Demo Devices
+    model: SN-200
+    firmwareVersion: "1.0.1"
+    serialNumber: "SN-001"
 ```
 
-### Asset fields
+---
 
-| Field | Required | Meaning |
-|-------|----------|---------|
-| `deviceId` | Yes | Unique ID for the simulated asset. |
-| `deviceClass` | Yes | Selects the simulator/model implementation, such as `sensorNode` or `smartMeter`. |
-| `protocol` | Yes | Selects the runtime behavior, such as `mqtt` or `modbus`. |
-| `name` | Yes | Human-readable asset name used for identity and registration. |
-| `intervalSec` | Yes | Tick interval for the simulator model. |
-| `profile` | Yes, in practice | Device-specific simulation inputs such as min/max values or base electrical parameters. |
-| `metadata` | Optional but recommended | Device identity details such as manufacturer, model, firmware version, or protocol-specific settings used during transition. |
+### `smartMeter`
 
-### profile
+Simulates an electrical smart meter that reports voltage, current, frequency, power factor, active power, and cumulative energy. Energy accumulates each tick. Alarms fire when voltage or power factor fall outside acceptable thresholds.
 
-The `profile` block contains simulator-specific behavior inputs. Different `deviceClass` values can define different profile fields, which means the exact keys inside `profile` depend on the simulator implementation rather than the global YAML schema.
+#### `profile` fields
 
-Examples:
+| Field | Default | Description |
+|-------|---------|-------------|
+| `startingEnergyKwh` | `1250.0` | Initial cumulative energy reading in kWh. Increases each tick. |
+| `baseVoltageV` | `120.0` | Centre voltage in volts. Typical values: `120.0` (North America), `230.0` (Europe). |
+| `baseCurrentA` | `18.0` | Centre current in amps. |
+| `baseFrequencyHz` | `60.0` | Centre frequency in Hz. Typical values: `60.0` (North America), `50.0` (Europe). |
+| `basePowerFactor` | `0.97` | Centre power factor. Valid range: 0.0–1.0. |
+| `voltageVariationV` | `2.5` | Maximum random deviation from `baseVoltageV` each tick (±). |
+| `currentVariationA` | `3.0` | Maximum random deviation from `baseCurrentA` each tick (±). |
+| `frequencyVariationHz` | `0.08` | Maximum random deviation from `baseFrequencyHz` each tick (±). |
+| `powerFactorDropMax` | `0.03` | Maximum downward shift applied to power factor each tick. |
+| `powerFactorRiseMax` | `0.01` | Maximum upward shift applied to power factor each tick. |
 
-- A `sensorNode` profile may define battery level, temperature range, and humidity range.
-- A `smartMeter` profile may define base voltage, current, frequency, power factor, and energy starting point.
+Power factor is clamped to the range 0.75–1.0 regardless of variation settings.
 
-### metadata
+#### `metadata` fields
 
-The `metadata` block is intended for descriptive identity data such as manufacturer, model, and firmware version. In the current stage of the project, it may also temporarily hold protocol-specific settings such as Modbus port or unit ID until a dedicated protocol config block is introduced.
+| Field | Default | Description |
+|-------|---------|-------------|
+| `manufacturer` | `"Demo Utilities"` | Manufacturer name. |
+| `model` | `"SM-1000"` | Model name. |
+| `firmwareVersion` | `"1.0.0"` | Firmware version. |
+| `serialNumber` | Device ID | Serial number. |
+| `hardwareRevision` | `"A1"` | Hardware revision. |
+| `lastInspectionDate` | `"2026-01-15"` | Last inspection date reported in service state (ISO 8601 date). |
+| `calibrationStatus` | `"valid"` | Calibration status reported in compliance state. |
 
-A likely future refinement is to split protocol execution settings out into something like `protocolConfig`, but that is not required to use the current version of the simulator.
+#### `metadata` fields (Modbus only)
 
-## Running the simulator
+These fields are only used when `protocol` is `modbus`.
 
-The main entrypoint loads assets, builds simulators using the simulator factory, builds protocol runtimes using the runtime factory, and starts those runtimes together. The current runtime pattern supports mixed-protocol execution, which means MQTT and Modbus devices can be active simultaneously in a single process.
+| Field | Default | Description |
+|-------|---------|-------------|
+| `modbusPort` | `5020` | TCP port the Modbus server listens on. |
+| `modbusUnitId` | `1` | Modbus unit (slave) ID. |
+| `modbusRegisterCount` | `100` | Number of holding registers allocated in the datastore. |
 
-A simplified flow is:
+#### Alarms emitted
 
-1. Load `assets.yaml` into `AssetConfig` objects.
-2. Load connection and measurement mapping YAML files as raw dictionaries.[1]
-3. Build a shared MQTT publisher context for MQTT-backed assets.
-4. For each configured asset, build the simulator selected by `deviceClass`.
-5. Build the protocol runtime selected by `protocol`.
-6. Start all runtimes together.
+| Alarm type | Trigger condition | Severity |
+|------------|------------------|---------|
+| `underVoltage` | Voltage drops below 92% of `baseVoltageV` | `MINOR` |
+| `powerFactorLow` | Power factor drops below 0.85 | `WARNING` |
 
-## Simulator and runtime selection
+#### Example
 
-### Simulator factory
+```yaml
+- deviceId: "meter-001"
+  deviceClass: smartMeter
+  protocol: modbus
+  name: Building A Smart Meter
+  intervalSec: 5
+  profile:
+    startingEnergyKwh: 5400.0
+    baseVoltageV: 230.0
+    baseCurrentA: 16.0
+    baseFrequencyHz: 50.0
+    basePowerFactor: 0.95
+    voltageVariationV: 3.0
+    currentVariationA: 2.0
+    frequencyVariationHz: 0.05
+    powerFactorDropMax: 0.02
+    powerFactorRiseMax: 0.005
+  metadata:
+    manufacturer: Schneider Demo
+    model: PowerLogic Virtual
+    firmwareVersion: "2.3.1"
+    modbusPort: 5020
+    modbusUnitId: 1
+    modbusRegisterCount: 100
+```
 
-The simulator factory maps `deviceClass` to the correct simulator implementation. For example:
+---
 
-- `sensorNode` -> `SensorNodeSimulator`.
-- `smartMeter` -> `SmartMeterSimulator`.
+## Protocols
 
-This keeps `main.py` from hardcoding simulator construction logic throughout the orchestration flow.
+### `mqtt`
 
-### Protocol runtime factory
+Ticks the simulator on `intervalSec` and publishes state to Cumulocity via the shared MQTT publisher. Creates or updates the managed object in Cumulocity on first run.
 
-The protocol runtime factory maps `protocol` to the correct runtime behavior. For example:
+**Requirements**: valid `configs/connection.yaml` with Cumulocity credentials.
 
-- `mqtt` -> `MqttRuntime`, which periodically ticks the simulator and publishes state through the shared MQTT publisher.
-- `modbus` -> `ModbusRuntime`, which starts a Modbus server and exposes simulator values through a register map.
+**No `protocolConfig` needed.**
 
-This separation allows the same simulator class to be reused with different protocols if needed, depending on the adapter and mapper implementation.
+**Supported device classes**: `sensorNode`, `smartMeter`
 
-## MQTT behavior
+```yaml
+- deviceId: "12345"
+  deviceClass: sensorNode
+  protocol: mqtt
+  name: Jake MQTT Device
+  intervalSec: 10
+  profile:
+    startingBatteryPct: 88
+    tempMinC: 19.5
+    tempMaxC: 23.5
+    humidityMinPct: 30
+    humidityMaxPct: 50
+    batteryDrainPerTickMax: 0.15
+  metadata:
+    manufacturer: Demo Devices
+    model: SN-200
+    firmwareVersion: "1.0.1"
+```
 
-For MQTT assets, the runtime periodically calls the simulator `tick()` method and then sends the resulting state through the MQTT publisher. The publisher is responsible for registration/ensure-device logic, measurement publishing, and alarm publishing against the target platform.
+---
 
-When an MQTT asset is configured correctly, the expected runtime behavior is:
+### `modbus`
 
-- simulator state updates on the configured interval,
-- device existence is verified or created as needed,
-- measurements are published,
-- alarms are published if present.
+Starts a Modbus TCP server and maps the current simulator state into holding registers. External Modbus clients poll the server address to read live values.
 
-## Modbus behavior
+**Requirements**: PyModbus installed. Port specified in `metadata.modbusPort` (default `5020`) must be available.
 
-For Modbus assets, the runtime starts a Modbus server rather than publishing on a broker-style schedule. External Modbus clients poll the server, and the current register values represent the current simulated device state at the time of the read.
+**No `protocolConfig` needed.**
 
-The current working implementation uses PyModbus 3.11.2 with the classic mutable datastore model rather than the newer `SimData`/`SimDevice` path, because the older approach supports the live-updating register behavior expected for simulated telemetry devices.[2][3]
+**Supported device classes**: `smartMeter`
 
-The earlier `Illegal Data Address` issue came from client-side address interpretation rather than a broken server implementation. Once the client offset and valid register range matched the datastore base address, live values appeared as expected.[4][5]
+#### Modbus register map (smartMeter)
 
-## Example mixed fleet
+| Register | Value | Scale | Type |
+|----------|-------|-------|------|
+| 0 | `voltageV` × 10 | e.g., 1200 = 120.0 V | signed int16 |
+| 1 | `currentA` × 100 | e.g., 1800 = 18.0 A | signed int16 |
+| 2 | `powerKw` × 1000 | e.g., 2098 = 2.098 kW | signed int16 |
+| 3 | `powerFactor` × 1000 | e.g., 970 = 0.970 | signed int16 |
+| 4 | `frequencyHz` × 100 | e.g., 6000 = 60.0 Hz | signed int16 |
+| 5 | `temperatureC` × 10 | e.g., 215 = 21.5 °C | signed int16 |
+| 6–7 | `energyKwh` converted to Wh, big-endian split | | 2 × int16 |
 
-A mixed `assets.yaml` can include both MQTT and Modbus devices together. For example:
+```yaml
+- deviceId: "20001"
+  deviceClass: smartMeter
+  protocol: modbus
+  name: Building Smart Meter
+  intervalSec: 5
+  profile:
+    startingEnergyKwh: 5400.0
+    baseVoltageV: 120.0
+    baseCurrentA: 22.0
+    baseFrequencyHz: 60.0
+    basePowerFactor: 0.96
+  metadata:
+    modbusPort: 5020
+    modbusUnitId: 1
+    modbusRegisterCount: 100
+```
+
+---
+
+### `lora`
+
+Ticks the simulator on `intervalSec` and sends an HTTP POST to a LoRa network server or codec endpoint with a binary payload packed as a 3-byte hex string.
+
+**Supported device classes**: `sensorNode`
+
+**Requires `protocolConfig`**:
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `deveui` | Yes | — | LoRa device EUI (16 hex characters). |
+| `serverUri` | Yes | — | HTTP endpoint to POST the uplink payload to (e.g., a Cumulocity LoRa codec decode URL). |
+| `fport` | No | `1` | LoRa FPort number included in the uplink payload. |
+| `deviceProtocolName` | No | `"iot-simulator LoRa SensorNode"` | Protocol name sent in the payload body; used by codec endpoints to select the decoder. |
+
+#### Payload format
+
+The uplink body sent to `serverUri` is a JSON object:
+
+```json
+{
+  "deveui": "70B3D57ED0001234",
+  "payload": "00df32",
+  "time": "2026-05-21T10:00:00Z",
+  "manufacturer": "Demo Devices",
+  "model": "LORA-SN-100",
+  "firmwareVersion": "1.0.0",
+  "deviceProtocolName": "IoTSimulator LoRa SensorNode"
+}
+```
+
+The `payload` hex encodes 3 bytes:
+- Bytes 0–1: `temperatureC × 10` as signed int16, big-endian
+- Byte 2: `humidityPct` as unsigned int8 (clamped 0–255)
+
+```yaml
+- deviceId: "lora-sensor-001"
+  deviceClass: sensorNode
+  protocol: lora
+  name: LoRa Sensor Node 001
+  intervalSec: 60
+  profile:
+    startingBatteryPct: 90
+    tempMinC: 18.0
+    tempMaxC: 25.0
+    humidityMinPct: 35
+    humidityMaxPct: 60
+    batteryDrainPerTickMax: 0.05
+  metadata:
+    manufacturer: Demo Devices
+    model: LORA-SN-100
+    firmwareVersion: "1.0.0"
+  protocolConfig:
+    deveui: "70B3D57ED0001234"
+    serverUri: "https://your-tenant.cumulocity.com/service/lora-codec/decode"
+    fport: 2
+    deviceProtocolName: "IoTSimulator LoRa SensorNode"
+```
+
+---
+
+### `lwm2m`
+
+Registers the device with a LwM2M server using CoAP and exposes observable resources. The simulator ticks on `intervalSec`, updates the temperature resource value, and refreshes the registration lifetime. Cumulocity can observe `/3303/{instance}/5700` for temperature readings.
+
+**Supported device classes**: `sensorNode`
+
+**Requires `protocolConfig`**:
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `endpointId` | Yes | — | LwM2M endpoint name used during registration. Must be unique on the server. |
+| `serverUri` | Yes | — | CoAP server URI. Use `coap://` for `NO_SEC` and `coaps://` for `PSK`. |
+| `securityMode` | Yes | — | `"NO_SEC"` or `"PSK"`. |
+| `pskIdentity` | No | `""` | PSK identity string. Required when `securityMode` is `"PSK"`. |
+| `pskKeyHex` | No | `""` | PSK key as a hex string. Required when `securityMode` is `"PSK"`. |
+| `lifetimeSec` | No | `300` | Registration lifetime in seconds. |
+| `bindingMode` | No | `"U"` | LwM2M binding mode. See [Binding modes](#binding-modes) below. |
+| `objectModel` | No | See below | Controls which LwM2M objects are advertised during registration. |
+
+#### `objectModel` fields
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `includeDeviceObject` | `true` | Advertise Object 3 (Device). Exposes manufacturer, model, firmware, battery, etc. |
+| `includeLocationObject` | `false` | Advertise Object 6 (Location). Exposes lat/lng/alt if the asset has a `location` configured. |
+| `includeTemperatureObject` | `true` | Advertise Object 3303 (Temperature Sensor). |
+| `temperatureInstanceId` | `0` | Instance ID used for the temperature object. Increment if multiple temperature objects are needed. |
+| `sendMode` | `"observe"` | How temperature values are delivered. `"observe"` sends a CoAP Notify to active observers each tick. |
+
+#### Binding modes
+
+| Value | Meaning |
+|-------|---------|
+| `"U"` | UDP (default) |
+| `"T"` | TCP |
+| `"S"` | DTLS-secured UDP |
+| `"UT"` | UDP + TCP |
+
+#### Security modes
+
+| Value | Server URI scheme | Notes |
+|-------|------------------|-------|
+| `"NO_SEC"` | `coap://` | No security. Works without C extensions on Windows. |
+| `"PSK"` | `coaps://` | DTLS pre-shared key. Requires the `DTLSSocket` C extension (`pip install DTLSSocket`; needs C build tools on Windows). |
+
+```yaml
+- deviceId: "lwm2m-sensor-001"
+  deviceClass: sensorNode
+  protocol: lwm2m
+  name: LwM2M Sensor Node 001
+  intervalSec: 30
+  profile:
+    startingBatteryPct: 96
+    tempMinC: 18.0
+    tempMaxC: 24.5
+    humidityMinPct: 35
+    humidityMaxPct: 55
+    batteryDrainPerTickMax: 0.05
+  metadata:
+    manufacturer: Demo Devices
+    model: LWM2M-SN-100
+    firmwareVersion: "1.0.0"
+  protocolConfig:
+    endpointId: "lwm2m-sensor-001"
+    serverUri: "coap://lwm2m.eu-latest.cumulocity.com:5783"
+    securityMode: "NO_SEC"
+    lifetimeSec: 300
+    bindingMode: "U"
+    objectModel:
+      includeDeviceObject: true
+      includeLocationObject: false
+      includeTemperatureObject: true
+      temperatureInstanceId: 0
+      sendMode: "observe"
+```
+
+To use PSK instead:
+
+```yaml
+  protocolConfig:
+    endpointId: "lwm2m-sensor-001"
+    serverUri: "coaps://lwm2m.eu-latest.cumulocity.com:5784"
+    securityMode: "PSK"
+    pskIdentity: "your-identity"
+    pskKeyHex: "aabbccddeeff00112233445566778899"
+    lifetimeSec: 300
+    bindingMode: "U"
+```
+
+---
+
+## Mixed fleet example
+
+A single `assets.yaml` can contain devices of different classes and protocols running simultaneously:
 
 ```yaml
 assets:
-  - deviceId: "12345"
+  - deviceId: "sensor-001"
     deviceClass: sensorNode
     protocol: mqtt
-    name: Jake MQTT Device
+    name: MQTT Sensor
     intervalSec: 10
     profile:
-      startingBatteryPct: 88
-      tempMinC: 19.5
-      tempMaxC: 23.5
-      humidityMinPct: 30
-      humidityMaxPct: 50
-      batteryDrainPerTickMax: 0.15
+      startingBatteryPct: 85
+      tempMinC: 20.0
+      tempMaxC: 25.0
+      humidityMinPct: 40
+      humidityMaxPct: 60
+      batteryDrainPerTickMax: 0.2
     metadata:
       manufacturer: Demo Devices
       model: SN-200
       firmwareVersion: "1.0.1"
 
-  - deviceId: "20001"
+  - deviceId: "meter-001"
     deviceClass: smartMeter
     protocol: modbus
-    name: Building Smart Meter
+    name: Building Meter
     intervalSec: 5
     profile:
-      startingEnergyKwh: 5400.0
-      baseVoltageV: 120.0
-      baseCurrentA: 22.0
-      baseFrequencyHz: 60.0
-      basePowerFactor: 0.96
-      voltageVariationV: 1.5
-      currentVariationA: 2.0
-      frequencyVariationHz: 0.03
+      startingEnergyKwh: 1000.0
+      baseVoltageV: 230.0
+      baseCurrentA: 16.0
+      baseFrequencyHz: 50.0
+      basePowerFactor: 0.95
+      voltageVariationV: 3.0
+      currentVariationA: 2.5
+      frequencyVariationHz: 0.05
       powerFactorDropMax: 0.02
       powerFactorRiseMax: 0.005
     metadata:
-      manufacturer: Schneider Demo
-      model: PowerLogic Virtual
-      firmwareVersion: "2.3.1"
       modbusPort: 5020
       modbusUnitId: 1
       modbusRegisterCount: 100
+
+  - deviceId: "lora-001"
+    deviceClass: sensorNode
+    protocol: lora
+    name: LoRa Field Sensor
+    intervalSec: 60
+    profile:
+      startingBatteryPct: 95
+      tempMinC: 15.0
+      tempMaxC: 30.0
+      humidityMinPct: 30
+      humidityMaxPct: 70
+      batteryDrainPerTickMax: 0.05
+    metadata:
+      manufacturer: Demo Devices
+      model: LORA-SN-100
+      firmwareVersion: "1.0.0"
+    protocolConfig:
+      deveui: "70B3D57ED0001234"
+      serverUri: "https://your-tenant.cumulocity.com/service/lora-codec/decode"
+      fport: 1
+      deviceProtocolName: "IoTSimulator LoRa SensorNode"
+
+  - deviceId: "lwm2m-001"
+    deviceClass: sensorNode
+    protocol: lwm2m
+    name: LwM2M Field Sensor
+    intervalSec: 30
+    profile:
+      startingBatteryPct: 90
+      tempMinC: 18.0
+      tempMaxC: 26.0
+      humidityMinPct: 35
+      humidityMaxPct: 65
+      batteryDrainPerTickMax: 0.05
+    metadata:
+      manufacturer: Demo Devices
+      model: LWM2M-SN-100
+      firmwareVersion: "1.0.0"
+    protocolConfig:
+      endpointId: "lwm2m-001"
+      serverUri: "coap://lwm2m.eu-latest.cumulocity.com:5783"
+      securityMode: "NO_SEC"
+      lifetimeSec: 300
+      bindingMode: "U"
+      objectModel:
+        includeDeviceObject: true
+        includeLocationObject: false
+        includeTemperatureObject: true
+        temperatureInstanceId: 0
+        sendMode: "observe"
 ```
 
-This kind of config allows the simulator to run one asset through MQTT and another through Modbus at the same time using the same factory-driven orchestration path.
-
-## Identity and state
-
-Runtime state is represented canonically through `AssetState`, which lets different protocol adapters consume a common model instead of reading raw YAML directly. A useful pattern is to populate `AssetState.identity` with stable descriptive fields such as device ID, name, device class, protocol, manufacturer, model, and firmware version.
-
-This keeps the state model clear:
-
-- `identity` describes what the asset is,
-- `telemetry` describes what the asset is doing right now,
-- `alarms` describe exceptional conditions attached to that asset.
+---
 
 ## Extending the simulator
 
-To add a new device class:
+### Adding a new device class
 
-1. Create a new simulator/model class that emits `AssetState`.
-2. Add the class to the simulator factory registry.
-3. Define its expected `profile` fields in configuration documentation.
-4. Add any protocol-specific mapping needed for MQTT payloads or Modbus registers.
+1. Create a simulator class that produces `AssetState` on each `tick()` call.
+2. Register it in `core/factories/simulator_factory.py` under a new `deviceClass` string.
+3. Add any Modbus register mapping in `adapters/modbus/` if Modbus support is needed.
+4. Document the `profile` and `metadata` fields for the new class.
 
-To add a new protocol:
+### Adding a new protocol
 
-1. Create a runtime class that exposes a common execution interface such as `run_forever()`.
-2. Add protocol selection logic in the protocol runtime factory.
-3. Add any protocol-specific config conventions or mappings.
+1. Create a runtime class with a `run_forever()` coroutine.
+2. Register it in `core/factories/protocol_runtime_factory.py` under a new `protocol` string.
+3. Add any protocol-specific payload encoding in `adapters/`.
+4. Document the `protocolConfig` fields for the new protocol.
 
-## Practical notes
+---
 
-- Keep `assets.yaml` typed and stable, because it now serves as the main contract between configuration and runtime behavior.
-- Keep `main.py` focused on orchestration, not simulator or protocol branching.
-- Use factories to prevent `main.py` from becoming MQTT-specific or Modbus-specific again.
-- Introduce dedicated protocol config sections later if protocol-specific settings begin to outgrow `metadata`.
+## Architecture summary
 
-## Current status
+```
+assets.yaml
+    │
+    ▼
+AssetConfig ──► SimulatorFactory ──► Simulator (SensorNode / SmartMeter)
+                                              │
+                                           tick()
+                                              │
+                                         AssetState
+                                              │
+               ProtocolRuntimeFactory ──► Runtime
+                                              │
+                    ┌─────────────────────────┼──────────────────────────┐
+                    ▼                         ▼                          ▼
+              MqttRuntime              ModbusRuntime              LoraRuntime / Lwm2mRuntime
+                    │                         │                          │
+             Cumulocity REST           Modbus TCP server          HTTP POST / CoAP
+```
 
-The current implementation has already demonstrated simultaneous MQTT and Modbus execution, which validates the core architecture direction and confirms that mixed-protocol assets can be driven from the same configuration and orchestration flow.
+All runtimes execute concurrently via `asyncio.gather()`.

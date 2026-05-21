@@ -1,8 +1,11 @@
 import json
+import logging
 from datetime import timezone
 
 import paho.mqtt.client as mqtt
 import requests
+
+_log = logging.getLogger(__name__)
 
 
 class C8yMqttPublisher:
@@ -45,10 +48,13 @@ class C8yMqttPublisher:
         self.known_devices = {}
 
     def on_connect(self, client, userdata, flags, rc):
-        print(f"MQTT connected with result code {rc}")
+        _log.info("connected rc=%s", rc)
 
     def on_disconnect(self, client, userdata, rc):
-        print(f"MQTT disconnected with result code {rc}")
+        if rc == 0:
+            _log.info("disconnected cleanly")
+        else:
+            _log.warning("disconnected rc=%s", rc)
 
     def connect(self):
         self.client.connect(self.mqtt_host, self.mqtt_port, keepalive=60)

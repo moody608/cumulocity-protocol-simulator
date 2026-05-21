@@ -1,25 +1,38 @@
+"""
+Sensor node simulator for the IoT simulator.
+
+Models a battery-powered environmental sensor that emits temperature, humidity,
+signal RSSI, and battery level each tick. Battery drains gradually over time and
+raises a batteryLow alarm when it falls below 20%. Supports additional user-defined
+channels declared in the asset profile.
+"""
 import random
 from datetime import datetime, timezone
 
-from core.models.base import AssetState, AlarmState
+from core.models.base import AssetState, AlarmState, Channel
+from core.models.base_simulator import BaseSimulator
 
 
-class SensorNodeSimulator:
+class SensorNodeSimulator(BaseSimulator):
     def __init__(
         self,
         device_id: str,
         name: str,
+        protocol: str = "mqtt",
         interval_sec: int = 5,
         profile=None,
         location=None,
-        metadata=None
+        metadata=None,
+        channels: list[Channel] | None = None,
     ):
         self.device_id = str(device_id)
         self.name = name
+        self.protocol = protocol
         self.interval_sec = int(interval_sec)
         self.profile = profile or {}
         self.location = location
         self.metadata = metadata or {}
+        self.channels: list[Channel] = channels or []
 
         self.battery = float(self.profile.get("startingBatteryPct", random.randint(70, 95)))
 
@@ -54,10 +67,19 @@ class SensorNodeSimulator:
                 )
             )
 
+        telemetry = {
+            "temperatureC": temperature,
+            "humidityPct": humidity,
+            "batteryPct": round(self.battery, 1),
+            "signalRssi": rssi,
+        }
+        for channel in self.channels:
+            telemetry[channel.name] = round(random.uniform(channel.min, channel.max), channel.precision)
+
         return AssetState(
             device_id=self.device_id,
             device_class="sensorNode",
-            protocol="mqtt",
+            protocol=self.protocol,
             timestamp=now,
             identity={
                 "name": self.name,
@@ -67,12 +89,7 @@ class SensorNodeSimulator:
                 "manufacturer": self.metadata.get("manufacturer", "Demo Devices"),
                 "hardwareRevision": self.metadata.get("hardwareRevision", "A1"),
             },
-            telemetry={
-                "temperatureC": temperature,
-                "humidityPct": humidity,
-                "batteryPct": round(self.battery, 1),
-                "signalRssi": rssi,
-            },
+            telemetry=telemetry,
             operational={
                 "status": "ONLINE",
                 "availability": "AVAILABLE",

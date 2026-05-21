@@ -17,7 +17,9 @@ def build_simulator(asset: AssetConfig):
     return simulator_cls(
         device_id=str(asset.device_id),
         name=asset.name,
+        protocol=asset.protocol,
         interval_sec=int(asset.interval_sec),
         profile=asset.profile,
         metadata=asset.metadata,
+        channels=asset.channels,
     )

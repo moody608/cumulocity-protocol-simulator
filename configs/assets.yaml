@@ -36,3 +36,69 @@ assets:
       manufacturer: Schneider Demo
       model: PowerLogic Virtual
       firmwareVersion: "2.3.1"
+
+  - deviceId: "lora-sensor-001"
+    deviceClass: sensorNode
+    protocol: lora
+    name: LoRa Sensor Node 001
+    intervalSec: 60
+    profile:
+      startingBatteryPct: 90
+      tempMinC: 18.0
+      tempMaxC: 25.0
+      humidityMinPct: 35
+      humidityMaxPct: 60
+      batteryDrainPerTickMax: 0.05
+      channels:
+        - name: co2Ppm
+          min: 400
+          max: 1200
+          precision: 0
+        - name: pressureHpa
+          min: 1010.0
+          max: 1020.0
+          precision: 1
+    metadata:
+      manufacturer: Demo Devices
+      model: LORA-SN-100
+      firmwareVersion: "1.0.0"
+    protocolConfig:
+      deveui: "70B3D57ED0001234"
+      serverUri: "https://jake.eu-latest.cumulocity.com/service/lora-codec/decode"
+      fport: 2
+      deviceProtocolName: "IoTSimulator LoRa SensorNode"
+
+  - deviceId: "lwm2m-sensor-001"
+    deviceClass: sensorNode
+    protocol: lwm2m
+    name: LwM2M Sensor Node 001
+    intervalSec: 30
+    profile:
+      startingBatteryPct: 96
+      tempMinC: 18.0
+      tempMaxC: 24.5
+      humidityMinPct: 35
+      humidityMaxPct: 55
+      batteryDrainPerTickMax: 0.05
+    metadata:
+      manufacturer: Demo Devices
+      model: LWM2M-SN-100
+      firmwareVersion: "1.0.0"
+    protocolConfig:
+      endpointId: "lwm2m-sensor-001"
+      # NO_SEC — works without DTLSSocket C extension.
+      # To switch to PSK: change serverUri to coaps://lwm2m.eu-latest.cumulocity.com:5784,
+      # set securityMode: "PSK", and fill in real pskIdentity/pskKeyHex values.
+      # Requires: pip install DTLSSocket (needs C build tools on Windows).
+      serverUri: "coap://lwm2m.eu-latest.cumulocity.com:5783"
+      securityMode: "NO_SEC"
+      pskIdentity: ""
+      pskKeyHex: ""
+      lifetimeSec: 300
+      bindingMode: "U"
+      objectModel:
+        includeDeviceObject: true
+        includeLocationObject: false
+        includeTemperatureObject: true
+        temperatureInstanceId: 0
+        sendMode: "observe"
